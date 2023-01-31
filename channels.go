@@ -38,4 +38,21 @@ func main() {
 	//ch <- 3 overfilling the buffer causes an error
 	fmt.Println(<-ch)
 	fmt.Println(<-ch)
+
+	//directional channels increase type-safety of programs.
+	//channel behavior is declared in a function's arguments
+
+	pings := make(chan string, 1)
+	pongs := make(chan string, 1)
+
+	ping(pings, "hey there") //goes into pings
+	pong(pings, pongs)       //pings goes local variable goes into pongs
+	fmt.Println(<-pongs)
+}
+func ping(pings chan<- string, msg string) { //only receives
+	pings <- msg //message goes into pings
+}
+func pong(pings <-chan string, pongs chan<- string) {
+	msg := <-pings //pings goes into this function's local msg
+	pongs <- msg   //msg goes into pongs
 }

@@ -5,12 +5,12 @@ https://golang.cafe/blog/how-to-list-files-in-a-directory-in-go.html
 
 
 import(
-	//"fmt"
+	"fmt"
 	"os"
 	"log"
 )
 
-func readFiles(directory string)([]os.DirEntry, int) {
+func readFiles(directory string)([]string, int) {
 	filepaths, err := os.ReadDir(directory)
 	if err != nil {
 		log.Println("Error: could not read files.")
@@ -22,11 +22,18 @@ func readFiles(directory string)([]os.DirEntry, int) {
 			return nil, 2
 		}
 	}
-	return filepaths, 0
+	files := make([]string, len(filepaths))
+	for i, fname := range(filepaths) {
+		files[i] = fname.Name()
+	}
+	return files, 0
 }
 
+
+
 func single_threaded(files []string) {
-	// TODO: Your single-threaded implementation
+
+	
 }
 
 func multi_threaded(files []string) {
@@ -35,5 +42,17 @@ func multi_threaded(files []string) {
 
 
 func main() {
+	files, error := readFiles("./input")
+	switch error {
+	case 1:
+		fmt.Println("Error reading file names from directory")
+		return
+	case 2:
+		fmt.Println("One of the files in that directory is also a directory")
+		fmt.Println("Please store only text files in your directory")
+	default:
+		single_threaded(files)
+	}
+	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions
 }

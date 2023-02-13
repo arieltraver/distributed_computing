@@ -5,15 +5,14 @@ https://golang.cafe/blog/how-to-list-files-in-a-directory-in-go.html
 
 
 import(
-	"fmt"
-	"io/iutil"
+	//"fmt"
 	"os"
 	"log"
 )
 
-func readFiles(directory string)([]os.FileInfo, int) {
-	filepaths, err := iutil.ReadDir(directory)
-	if err {
+func readFiles(directory string)([]os.DirEntry, int) {
+	filepaths, err := os.ReadDir(directory)
+	if err != nil {
 		log.Println("Error: could not read files.")
 		return nil, 1
 	}

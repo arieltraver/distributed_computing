@@ -8,6 +8,7 @@ import(
 	"fmt"
 	"os"
 	"log"
+	"bufio"
 )
 
 func readFiles(directory string)([]string, int) {
@@ -29,10 +30,29 @@ func readFiles(directory string)([]string, int) {
 	return files, 0
 }
 
-
+/*type ReaderAt interface {
+	ReadAt(p []byte, off int64) (n int, err error)
+}*/
 
 func single_threaded(files []string) {
-
+	counts := make(map[string] int) //store word counts by key which is the word itself
+	for _, filename := range(files) {
+		file, err := os.Open(filename) //file pointer
+		if err != nil {
+			log.Println(err)
+			fmt.Println("error opening file:", filename)
+		}
+		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
+		scanner.Split(bufio.ScanWords) //break reading pattern into words
+		for scanner.Scan() { //reads until EOF
+			word := scanner.Text()
+			counts[word] = counts[word] + 1 //increment word count in the dictionary
+			fmt.Println(word)
+		}
+	}
+	for key, count := range(counts) {
+		fmt.Println(key, ": ", count)
+	}
 	
 }
 

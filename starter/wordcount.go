@@ -1,8 +1,9 @@
 package main
 /*references used, other than official go documentation
-https://golang.cafe/blog/how-to-list-files-in-a-directory-in-go.html
-https://gosamples.dev/remove-non-alphanumeric/
-https://stackoverflow.com/questions/24073697/how-to-find-out-the-number-of-cpus-in-go-lang 
+-- https://golang.cafe/blog/how-to-list-files-in-a-directory-in-go.html
+-- https://gosamples.dev/remove-non-alphanumeric/
+-- https://stackoverflow.com/questions/24073697/how-to-find-out-the-number-of-cpus-in-go-lang 
+-- https://codewithyury.com/golang-wait-for-all-goroutines-to-finish/ 
 */
 
 
@@ -13,6 +14,7 @@ import(
 	"bufio"
 	"strings"
 	"regexp"
+	"sync"
 )
 
 func readFiles(directory string)([]string, int) {
@@ -66,8 +68,8 @@ func single_threaded(files []string) {
 	}
 }
 
-func countRoutine(file *os.File, c chan *map[string]int) {
-	//file.Seek(offset, 0)
+func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGroup) {
+	defer waitgroup.Done()
 	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
 	counts := make(map[string]int) //store word counts by key which is the word itself
@@ -82,23 +84,40 @@ func countRoutine(file *os.File, c chan *map[string]int) {
 				counts[wd2] = counts[wd2] + 1 //increment word count in the dictionary
 			}
 		}
-	c <- &counts
+	c <- &counts //once you're done counting, add the completed map to the channel.
 }
 
 func multi_threaded(files []string) {
 	// TODO: Your multi-threaded implementation
 	//divide up the files here.
-	c := make(chan *map[string]int, len(files)) //store results here
-	openFiles := make([]*os.File, len(files))
-	for i, filename := range(files) {
+	var waitgroup sync.WaitGroup //waiting for completion of routines
+	l := len(files)
+	c := make(chan *map[string]int, l) //store results here
+	for _, filename := range(files) {
 		file, err := os.Open(filename) //file pointer
 		if err != nil {
 			log.Println(err)
 			fmt.Println("error opening file:", filename)
+		} else {
+			waitgroup.Add(1) //add this routine to wait on.
+			go countRoutine(file, c, &waitgroup) //start a
 		}
-		//add logic for determining size
-		go countRoutine(file)
-	//wait for completion
+	}
+	waitgroup.Wait() //wait for all threads to complete.
+	
+	totals := make(map[string]int)
+	for countMap := range(c) { //for each routine's individual map...
+		for word, count := range(*countMap) { //dereferenced
+			totals[word] = totals[word] + count
+		}
+	}
+
+	close(c) //done with channel
+
+	for word, count := range(totals) {
+		fmt.Println(word, ":", count)
+	}
+
 }
 
 
@@ -111,7 +130,8 @@ func main() {
 	case 2:
 		fmt.Println("Please store only text files in your directory")
 	default:
-		single_threaded(files)
+		//single_threaded(files)
+		multi_threaded(files)
 	}
 	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions

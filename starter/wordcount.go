@@ -6,6 +6,7 @@ package main
 -- https://stackoverflow.com/questions/24073697/how-to-find-out-the-number-of-cpus-in-go-lang
 -- https://codewithyury.com/golang-wait-for-all-goroutines-to-finish/
 -- https://gist.github.com/mattes/d13e273314c3b3ade33f
+-- https://www.includehelp.com/golang/how-to-find-the-number-of-cpu-cores-used-by-the-current-process.aspx
 */
 
 import (
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"runtime"
 )
 
 
@@ -39,11 +41,20 @@ func readFiles(directory string)([]string, int) {
 	return files, 0
 }
 
-/*type ReaderAt interface {
-	ReadAt(p []byte, off int64) (n int, err error)
-}*/
 
-func single_threaded(files []string) {
+/**
+Reads each file in a dictionary
+**/
+func singleThreaded(files []string) {
+	counts := countSomeFiles(files)
+	err := writeMapToFile(os.Args[1] + "/single.txt", counts)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return
+	}
+}
+
+func countSomeFiles(files []string) *map[string]int {
 	counts := make(map[string] int) //store word counts by key which is the word itself
 	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	for _, filename := range(files) {
@@ -51,6 +62,7 @@ func single_threaded(files []string) {
 		if err != nil {
 			log.Println(err)
 			fmt.Println("error opening file:", filename)
+			return nil
 		}
 		defer file.Close() //make sure this is closed before return
 		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
@@ -66,13 +78,12 @@ func single_threaded(files []string) {
 			}
 		}
 	}
-	err := writeMapToFile(os.Args[1] + "/single.txt", &counts)
-	if err != nil {
-		fmt.Printf("%v\n", err)
-		return
-	}
+	return &counts
 }
 
+/**
+Writes a Map of string:int to file, handles open and close
+**/
 func writeMapToFile(filename string, counts *map[string]int) error {
 	singleOut, err := os.Create(filename)
 	if err != nil {
@@ -114,7 +125,56 @@ func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGro
 	c <- &counts //once you're done counting, add the completed map to the channel.
 }
 
-func multi_threaded(files []string) {
+func multi2(files []string) {
+	numRoutines := runtime.NumCPU() //base the number of threads on the number of CPUs you have.
+	l := len(files)
+	perEach := l / numRoutines
+	/**
+	essentially, we predetermine the number of threads, and assign some files per thread.
+	we sort the files by size such that the smaller files are first
+	this way, the routine which handles the smallest chunk is handling bigger files.
+	**/
+	if (l % numRoutines) > 0 {
+		perEach += 1 //round up.
+	}
+	if perEach <= 1 { //more routines than files, just assign one per each.
+		multiThreaded(files)
+		return
+	}
+	var waitgroup sync.WaitGroup //waiting for completion of routines
+	c := make(chan *map[string]int, l) //store results here
+	current := 0
+	for i := 0; i < numRoutines; i ++ { //send out a routine which acts on each set of files.
+		waitgroup.Add(1)
+		if current + perEach >= l {
+			go manage(c, files[current:], &waitgroup)
+		} else { //don't exceed file array size.
+			go manage(c, files[current:current+perEach], &waitgroup)
+		}
+		current += perEach
+	}
+	waitgroup.Wait()
+	close(c)
+	totals := make(map[string]int)
+	for countMap := range(c) { //for each routine's individual map...
+		for word, count := range(*countMap) { //dereferenced
+			totals[word] = totals[word] + count
+		}
+	}
+	err := writeMapToFile(os.Args[1] + "/multi2.txt", &totals)
+	if err != nil {
+		fmt.Printf("err: %v\n", err)
+		return
+	}	
+}
+
+func manage(c chan *map[string]int, files []string, waitgroup *sync.WaitGroup) {
+	defer waitgroup.Done()
+	counts := countSomeFiles(files) //returns a pointer to the array
+	c <- counts
+} 
+
+func multiThreaded(files []string) {
 	//divide up the files here.
 	var waitgroup sync.WaitGroup //waiting for completion of routines
 	l := len(files)
@@ -164,8 +224,9 @@ func main() {
 	case 2:
 		log.Fatal("Please store only text files in your directory")
 	default:
-		single_threaded(files)
-		multi_threaded(files)
+		singleThreaded(files)
+		multiThreaded(files)
+		multi2(files)
 	}
 	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions

@@ -1,21 +1,24 @@
 package main
+
 /*references used, other than official go documentation
 -- https://golang.cafe/blog/how-to-list-files-in-a-directory-in-go.html
 -- https://gosamples.dev/remove-non-alphanumeric/
--- https://stackoverflow.com/questions/24073697/how-to-find-out-the-number-of-cpus-in-go-lang 
--- https://codewithyury.com/golang-wait-for-all-goroutines-to-finish/ 
+-- https://stackoverflow.com/questions/24073697/how-to-find-out-the-number-of-cpus-in-go-lang
+-- https://codewithyury.com/golang-wait-for-all-goroutines-to-finish/
+-- https://gist.github.com/mattes/d13e273314c3b3ade33f
 */
 
-
-import(
-	"fmt"
-	"os"
-	"log"
+import (
 	"bufio"
-	"strings"
+	"fmt"
+	"log"
+	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 )
+
 
 func readFiles(directory string)([]string, int) {
 	filepaths, err := os.ReadDir(directory)
@@ -49,6 +52,7 @@ func single_threaded(files []string) {
 			log.Println(err)
 			fmt.Println("error opening file:", filename)
 		}
+		defer file.Close() //make sure this is closed before return
 		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
 		scanner.Split(bufio.ScanWords) //break reading pattern into words
 		for scanner.Scan() { //reads until EOF
@@ -60,16 +64,39 @@ func single_threaded(files []string) {
 				wd2 := nonLetter.ReplaceAllString(wd, "") //get rid of spaces
 				counts[wd2] = counts[wd2] + 1 //increment word count in the dictionary
 			}
-			//fmt.Println(word)
 		}
 	}
-	for key, count := range(counts) {
-		fmt.Println(key, ": ", count)
+	err := writeMapToFile(os.Args[1] + "/single.txt", &counts)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return
 	}
+}
+
+func writeMapToFile(filename string, counts *map[string]int) error {
+	singleOut, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("error creating output file")
+	}
+	defer singleOut.Close() //make sure file closes before return.
+	writer := bufio.NewWriter(singleOut)
+	total := 0
+	for key, count := range(*counts) {
+		str := key + " " + strconv.Itoa(count) + "\n"
+		_, err := writer.WriteString(str)
+		if err != nil {
+			return fmt.Errorf("error writing to output file")
+		}
+		writer.Flush()
+		total += 1
+	}
+	fmt.Println("total is", total)
+	return nil
 }
 
 func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGroup) {
 	defer waitgroup.Done()
+	fmt.Println("thread is going!")
 	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
 	counts := make(map[string]int) //store word counts by key which is the word itself
@@ -88,7 +115,6 @@ func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGro
 }
 
 func multi_threaded(files []string) {
-	// TODO: Your multi-threaded implementation
 	//divide up the files here.
 	var waitgroup sync.WaitGroup //waiting for completion of routines
 	l := len(files)
@@ -104,33 +130,41 @@ func multi_threaded(files []string) {
 		}
 	}
 	waitgroup.Wait() //wait for all threads to complete.
-	
+	close(c) //done with channel	
+
 	totals := make(map[string]int)
 	for countMap := range(c) { //for each routine's individual map...
 		for word, count := range(*countMap) { //dereferenced
 			totals[word] = totals[word] + count
 		}
 	}
-
-	close(c) //done with channel
-
-	for word, count := range(totals) {
-		fmt.Println(word, ":", count)
-	}
-
+	err := writeMapToFile(os.Args[1] + "/multi.txt", &totals)
+	if err != nil {
+		fmt.Printf("err: %v\n", err)
+		return
+	}	
 }
 
 
 func main() {
+	if len(os.Args) < 2 {
+		log.Fatal("please specify an output directory")
+	}
+	output_dir := os.Args[1]
+	if _, err := os.Stat(output_dir); os.IsNotExist(err) { //doe
+		err := os.Mkdir(output_dir, os.ModePerm)
+		if err != nil {
+        	log.Fatal(err)
+    	}
+	}
 	files, error := readFiles("./input")
 	switch error {
 	case 1:
-		fmt.Println("Error reading file names from directory")
-		return
+		log.Fatal("Error reading file names from directory") //calls to panic
 	case 2:
-		fmt.Println("Please store only text files in your directory")
+		log.Fatal("Please store only text files in your directory")
 	default:
-		//single_threaded(files)
+		single_threaded(files)
 		multi_threaded(files)
 	}
 	

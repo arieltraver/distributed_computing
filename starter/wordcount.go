@@ -7,6 +7,7 @@ package main
 -- https://codewithyury.com/golang-wait-for-all-goroutines-to-finish/
 -- https://gist.github.com/mattes/d13e273314c3b3ade33f
 -- https://www.includehelp.com/golang/how-to-find-the-number-of-cpu-cores-used-by-the-current-process.aspx
+-- https://socketloop.com/tutorials/golang-how-to-split-or-chunking-a-file-to-smaller-pieces 
 */
 
 import (
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"runtime"
+	"time"
 )
 
 
@@ -125,33 +127,38 @@ func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGro
 	c <- &counts //once you're done counting, add the completed map to the channel.
 }
 
+/**
+An attempt to divvy up the work based on the number of available CPUs.
+Oddly enough, it does not perform very well.
+**/
 func multi2(files []string) {
 	numRoutines := runtime.NumCPU() //base the number of threads on the number of CPUs you have.
+	fmt.Println("number of threads:", numRoutines)
 	l := len(files)
 	perEach := l / numRoutines
+	leftOver := l % numRoutines
 	/**
 	essentially, we predetermine the number of threads, and assign some files per thread.
 	we sort the files by size such that the smaller files are first
 	this way, the routine which handles the smallest chunk is handling bigger files.
 	**/
-	if (l % numRoutines) > 0 {
-		perEach += 1 //round up.
-	}
-	if perEach <= 1 { //more routines than files, just assign one per each.
+	if perEach < 1 { //more routines than files, just assign one per each.
 		multiThreaded(files)
 		return
 	}
 	var waitgroup sync.WaitGroup //waiting for completion of routines
 	c := make(chan *map[string]int, l) //store results here
-	current := 0
+	current := 0 //divide up the files
 	for i := 0; i < numRoutines; i ++ { //send out a routine which acts on each set of files.
+		fmt.Println("current is", current)
 		waitgroup.Add(1)
-		if current + perEach >= l {
-			go manage(c, files[current:], &waitgroup)
-		} else { //don't exceed file array size.
+		if leftOver > 0 {
+			go manage(c, files[current:current+perEach+1], &waitgroup)
+		} else {
 			go manage(c, files[current:current+perEach], &waitgroup)
 		}
 		current += perEach
+		leftOver -= 1
 	}
 	waitgroup.Wait()
 	close(c)
@@ -173,6 +180,14 @@ func manage(c chan *map[string]int, files []string, waitgroup *sync.WaitGroup) {
 	counts := countSomeFiles(files) //returns a pointer to the array
 	c <- counts
 } 
+
+/**
+break big files into two files.
+**/
+func divideFilesDir(dirName []string, threshold int) {
+
+}
+
 
 func multiThreaded(files []string) {
 	//divide up the files here.
@@ -224,9 +239,13 @@ func main() {
 	case 2:
 		log.Fatal("Please store only text files in your directory")
 	default:
-		singleThreaded(files)
+		//singleThreaded(files)
+		start := time.Now()
 		multiThreaded(files)
+		fmt.Println(time.Since(start))
+		start2 := time.Now()
 		multi2(files)
+		fmt.Println(time.Since(start2))
 	}
 	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions

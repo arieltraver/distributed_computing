@@ -69,8 +69,42 @@ func countSomeFiles(files []string) *map[string]int {
 		defer file.Close() //make sure this is closed before return
 		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
 		scanner.Split(bufio.ScanWords) //break reading pattern into words
-		for scanner.Scan() { //reads until EOF
+		for scanner.Scan() { //reads until EOF OR until the limit
 			word := scanner.Text()
+			word = strings.ToLower(word) //lowercase-ify
+			word = nonLetter.ReplaceAllString(word, " ") //get rid of extra characters
+			words := strings.Split(word, " ") //split words by char
+			for _, wd := range(words) {
+				wd2 := nonLetter.ReplaceAllString(wd, "") //get rid of spaces
+				counts[wd2] = counts[wd2] + 1 //increment word count in the dictionary
+			}
+		}
+	}
+	return &counts
+}
+
+func countSplitFiles(filesOffsets *fpOffsets) *map[string]int {
+	counts := make(map[string] int) //store word counts by key which is the word itself
+	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	for i, filename := range(filesOffsets.filenames) {
+		
+		start := filesOffsets.offsets[i][0]
+		end := filesOffsets.offsets[i][1]
+		
+		file, err := os.Open(filename) //file pointer
+		if err != nil {
+			log.Println(err)
+			fmt.Println("error opening file:", filename)
+			return nil
+		}
+		defer file.Close() //make sure this is closed before return
+		file.Seek(start, 0) //start at desired start point.
+		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
+		scanner.Split(bufio.ScanWords) //break reading pattern into words
+		bytesRead := 0
+		for scanner.Scan() && bytesRead < int(end) { //reads until EOF OR until the limit
+			word := scanner.Text()
+			bytesRead += len(word) + 1 //read this many bytes
 			word = strings.ToLower(word) //lowercase-ify
 			word = nonLetter.ReplaceAllString(word, " ") //get rid of extra characters
 			words := strings.Split(word, " ") //split words by char
@@ -138,9 +172,7 @@ func multi2(files []string) {
 	perEach := l / numRoutines
 	leftOver := l % numRoutines
 	/**
-	essentially, we predetermine the number of threads, and assign some files per thread.
-	we sort the files by size such that the smaller files are first
-	this way, the routine which handles the smallest chunk is handling bigger files.
+	essentially, we predetermine the number of threads, and assign some files per thread
 	**/
 	if perEach < 1 { //more routines than files, just assign one per each.
 		multiThreaded(files)
@@ -179,13 +211,47 @@ func manage(c chan *map[string]int, files []string, waitgroup *sync.WaitGroup) {
 	defer waitgroup.Done()
 	counts := countSomeFiles(files) //returns a pointer to the array
 	c <- counts
-} 
+}
 
+func manageDivided(c chan *map[string]int, filesOffsets *fpOffsets, waitgroup *sync.WaitGroup) {
+	defer waitgroup.Done()
+	counts := countSplitFiles(filesOffsets)
+	c <- counts
+}
+
+//used for splitting large files
+type fpOffsets struct {
+	filenames []string
+	offsets [][]int64
+}
+
+func newFpOffsets (filenames []string, offsets [][]int64) *fpOffsets {
+	p := fpOffsets{filenames: filenames, offsets: offsets}
+	return &p
+}
 /**
-break big files into two files.
+determine the size of each file and break large ones into two.
 **/
-func divideFilesDir(dirName []string, threshold int) {
-
+func divideFiles(fps []string, threshold int64) *fpOffsets {
+	fileOffsets := make([][]int64, 0, len(fps) * 2) 
+	fileNames := make([]string, 0, len(fps) * 2)
+	for _, f := range(fps) {
+		descript, err := os.Stat(f)
+		if os.IsNotExist(err) {
+			log.Fatal("error: file not found")
+		}
+		fileNames = append(fileNames, descript.Name())
+		s := descript.Size()
+		if s > threshold {
+			fileNames = append(fileNames, descript.Name()) //append a second one.
+			fileOffsets = append(fileOffsets, ([]int64 {0, s / 2}))
+			fileOffsets = append(fileOffsets,([]int64 {s/2, s}) )
+		} else {
+			fileOffsets = append(fileOffsets, ([]int64 {0, s})) //whole file.
+		}
+	}
+	fpOffs := newFpOffsets(fileNames, fileOffsets)
+	return fpOffs
 }
 
 
@@ -220,13 +286,23 @@ func multiThreaded(files []string) {
 	}	
 }
 
+func multiDivided(files []string) {
+	filesOffsets := divideFiles(files, 5000000)
+	result := countSplitFiles(filesOffsets)
+	err := writeMapToFile(os.Args[1] + "/multiDivided.txt", result)
+	if err != nil {
+		fmt.Printf("err: %v\n", err)
+		return
+	}
+	return
+}
 
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("please specify an output directory")
 	}
 	output_dir := os.Args[1]
-	if _, err := os.Stat(output_dir); os.IsNotExist(err) { //doe
+	if _, err := os.Stat(output_dir); os.IsNotExist(err) {
 		err := os.Mkdir(output_dir, os.ModePerm)
 		if err != nil {
         	log.Fatal(err)
@@ -239,13 +315,18 @@ func main() {
 	case 2:
 		log.Fatal("Please store only text files in your directory")
 	default:
-		//singleThreaded(files)
+		start0 := time.Now()
+		singleThreaded(files)
+		fmt.Println(time.Since(start0))
 		start := time.Now()
 		multiThreaded(files)
 		fmt.Println(time.Since(start))
 		start2 := time.Now()
 		multi2(files)
 		fmt.Println(time.Since(start2))
+		start3 := time.Now()
+		multiDivided(files)
+		fmt.Println(time.Since(start3))
 	}
 	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions

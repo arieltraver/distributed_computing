@@ -16,12 +16,30 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"runtime"
 	"time"
 )
+
+/**
+Wrapper for the readerAt so that bufio will start from an offset.
+**/
+type OffsetReader struct {
+	r io.ReaderAt
+	offset int64
+}
+func (readerfrom OffsetReader) Read(p []byte) (bytesRead int, err error) {
+	read, err := readerfrom.r.ReadAt(p, readerfrom.offset)
+	if err != nil {
+		return read, err
+	}
+	readerfrom.offset = readerfrom.offset + int64(read) //move the offset.
+	return read, err
+
+}
 
 
 func readFiles(directory string)([]string, int) {
@@ -83,38 +101,39 @@ func countSomeFiles(files []string) *map[string]int {
 	return &counts
 }
 
-func countSplitFiles(filesOffsets *fpOffsets) *map[string]int {
+/**reads from a chunk of a file
+args:
+-- filename: the filepath as a string
+-- start: the start of the chunk to read
+-- end: the end of a chunk to read
+**/
+
+func countDivided(filename string, start int64, end int64, c chan *map[string]int, waitgroup *sync.WaitGroup) {
+	defer waitgroup.Done()
 	counts := make(map[string] int) //store word counts by key which is the word itself
 	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
-	for i, filename := range(filesOffsets.filenames) {
 		
-		start := filesOffsets.offsets[i][0]
-		end := filesOffsets.offsets[i][1]
-		
-		file, err := os.Open(filename) //file pointer
-		if err != nil {
-			log.Println(err)
-			fmt.Println("error opening file:", filename)
-			return nil
-		}
-		defer file.Close() //make sure this is closed before return
-		file.Seek(start, 0) //start at desired start point.
-		scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
-		scanner.Split(bufio.ScanWords) //break reading pattern into words
-		bytesRead := 0
-		for scanner.Scan() && bytesRead < int(end) { //reads until EOF OR until the limit
-			word := scanner.Text()
-			bytesRead += len(word) + 1 //read this many bytes
-			word = strings.ToLower(word) //lowercase-ify
-			word = nonLetter.ReplaceAllString(word, " ") //get rid of extra characters
-			words := strings.Split(word, " ") //split words by char
-			for _, wd := range(words) {
-				wd2 := nonLetter.ReplaceAllString(wd, "") //get rid of spaces
-				counts[wd2] = counts[wd2] + 1 //increment word count in the dictionary
-			}
+	file, err := os.Open(filename) //file pointer
+	if err != nil {
+		log.Fatal(err) //this wasnt fatal, then I got a segfault, so here
+	}
+	defer file.Close() //make sure this is closed before return
+	reader := OffsetReader{io.ReaderAt(file), start} //start at desired start point.
+	scanner := bufio.NewScanner(reader) //buffered i/o: creates a pipe for reading
+	scanner.Split(bufio.ScanWords) //break reading pattern into words
+	bytesRead := 0
+	for scanner.Scan() && reader.offset < end { //reads until EOF OR until the limit
+		word := scanner.Text()
+		bytesRead += len(word) + 1 //read this many bytes
+		word = strings.ToLower(word) //lowercase-ify
+		word = nonLetter.ReplaceAllString(word, " ") //get rid of extra characters
+		words := strings.Split(word, " ") //split words by char
+		for _, wd := range(words) {
+			wd2 := nonLetter.ReplaceAllString(wd, "") //get rid of spaces
+			counts[wd2] = counts[wd2] + 1 //increment word count in the dictionary
 		}
 	}
-	return &counts
+	c <- &counts
 }
 
 /**
@@ -143,7 +162,7 @@ func writeMapToFile(filename string, counts *map[string]int) error {
 
 func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGroup) {
 	defer waitgroup.Done()
-	fmt.Println("thread is going!")
+	//fmt.Println("thread is going!")
 	var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	scanner := bufio.NewScanner(file) //buffered i/o: creates a pipe for reading
 	counts := make(map[string]int) //store word counts by key which is the word itself
@@ -167,7 +186,7 @@ Oddly enough, it does not perform very well.
 **/
 func multi2(files []string) {
 	numRoutines := runtime.NumCPU() //base the number of threads on the number of CPUs you have.
-	fmt.Println("number of threads:", numRoutines)
+	//fmt.Println("number of threads:", numRoutines)
 	l := len(files)
 	perEach := l / numRoutines
 	leftOver := l % numRoutines
@@ -182,7 +201,7 @@ func multi2(files []string) {
 	c := make(chan *map[string]int, l) //store results here
 	current := 0 //divide up the files
 	for i := 0; i < numRoutines; i ++ { //send out a routine which acts on each set of files.
-		fmt.Println("current is", current)
+		//fmt.Println("current is", current)
 		waitgroup.Add(1)
 		if leftOver > 0 {
 			go manage(c, files[current:current+perEach+1], &waitgroup)
@@ -210,12 +229,6 @@ func multi2(files []string) {
 func manage(c chan *map[string]int, files []string, waitgroup *sync.WaitGroup) {
 	defer waitgroup.Done()
 	counts := countSomeFiles(files) //returns a pointer to the array
-	c <- counts
-}
-
-func manageDivided(c chan *map[string]int, filesOffsets *fpOffsets, waitgroup *sync.WaitGroup) {
-	defer waitgroup.Done()
-	counts := countSplitFiles(filesOffsets)
 	c <- counts
 }
 
@@ -263,8 +276,7 @@ func multiThreaded(files []string) {
 	for _, filename := range(files) {
 		file, err := os.Open(filename) //file pointer
 		if err != nil {
-			log.Println(err)
-			fmt.Println("error opening file:", filename)
+			log.Fatal(err)
 		} else {
 			waitgroup.Add(1) //add this routine to wait on.
 			go countRoutine(file, c, &waitgroup) //start a
@@ -288,16 +300,21 @@ func multiThreaded(files []string) {
 
 func multiDivided(files []string) {
 	filesOffsets := divideFiles(files, 5000000)
-	result := countSplitFiles(filesOffsets)
+	
+	fmt.Println("breakpoint 1: multidivided before countSplitFiles")
+	c := make(chan *map[string]int, l) //store results here
+	var waitgroup sync.WaitGroup //waiting for completion of routines
+	fmt.Println("breakpoint 2: multidivided before writemap")
 	err := writeMapToFile(os.Args[1] + "/multiDivided.txt", result)
 	if err != nil {
 		fmt.Printf("err: %v\n", err)
 		return
 	}
-	return
 }
 
 func main() {
+	
+	
 	if len(os.Args) < 2 {
 		log.Fatal("please specify an output directory")
 	}

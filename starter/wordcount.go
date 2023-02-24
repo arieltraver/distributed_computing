@@ -299,16 +299,34 @@ func multiThreaded(files []string) {
 }
 
 func multiDivided(files []string) {
-	filesOffsets := divideFiles(files, 5000000)
-	
-	fmt.Println("breakpoint 1: multidivided before countSplitFiles")
-	c := make(chan *map[string]int, l) //store results here
+
+	filesOffsets := divideFiles(files, 5000000) //list of filenames (names are repeated) and the offsets
+	names := filesOffsets.filenames
+	offsets := filesOffsets.offsets
+
+	c := make(chan *map[string]int, len(names)) //store results here
 	var waitgroup sync.WaitGroup //waiting for completion of routines
-	fmt.Println("breakpoint 2: multidivided before writemap")
-	err := writeMapToFile(os.Args[1] + "/multiDivided.txt", result)
+
+	for i, name := range(names) {
+		start := offsets[i][0]
+		end := offsets[i][1]
+		waitgroup.Add(1)
+		go countDivided(name, start, end, c, &waitgroup)	
+	}
+
+	waitgroup.Wait()
+	close(c)
+
+	result := make(map[string]int)
+	for countMap := range(c) { //for each routine's individual map...
+		for word, count := range(*countMap) { //dereferenced
+			result[word] = result[word] + count
+		}
+	}
+
+	err := writeMapToFile(os.Args[1] + "/multiDivided.txt", &result)
 	if err != nil {
-		fmt.Printf("err: %v\n", err)
-		return
+		log.Fatal(err)
 	}
 }
 

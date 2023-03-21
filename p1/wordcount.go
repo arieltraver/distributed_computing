@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"math"
 )
 var MAXWORDSIZE int = 30
 var READSIZE int = 10000
@@ -103,7 +104,7 @@ func getStr(file *os.File) (string, error) {
 }
 
 
-func multiThreaded2(files []string) {
+func multiThreaded(files []string) {
 	globalMap := SafeMap{wordmap:make(map[string]int)}
 	var waitgroup sync.WaitGroup
 	for _, filename := range(files) {
@@ -231,7 +232,7 @@ func countRoutine(file *os.File, c chan *map[string]int, waitgroup *sync.WaitGro
 /**
 determine the size of each file and break large ones into two.
 **/
-func multiThreaded(files []string) {
+func multiThreaded0(files []string) {
 	//divide up the files here.
 	var waitgroup sync.WaitGroup //waiting for completion of routines
 	l := len(files)
@@ -279,18 +280,45 @@ func main() {
 	case 2:
 		log.Fatal("Please store only text files in your directory")
 	default:
-		start0 := time.Now()
-		singleThreaded(files)
-		fmt.Println(time.Since(start0))
+		runTests(files)
 
-		start1 := time.Now()
-		multiThreaded(files)
-		fmt.Println(time.Since(start1))
-
-		start2 := time.Now()
-		multiThreaded2(files)
-		fmt.Println(time.Since(start2))
 	}
 	
 	// TODO: add argument processing and run both single-threaded and multi-threaded functions
+}
+
+/*performs time tests on a function which takes a string array. returns avg and stdev.*/
+func testFunc(foo func([]string), input []string, iterations int) (float64, float64) {
+	var sum float64 = 0
+	dataPoints := make([]float64, 0, iterations)
+	for i := 0; i < iterations; i ++ {
+		start := time.Now()
+		foo(input)
+		t := time.Since(start).Seconds()
+		sum += t
+		dataPoints = append(dataPoints, t)
+	}
+	avg := sum / float64(iterations)
+	var variance float64 = 0
+
+	for _, data := range(dataPoints) {
+		diff := data - avg
+		diff *= diff
+		variance += diff
+	}
+	variance /= (float64(iterations) - 1)
+	stdev := math.Pow(variance, 0.5)
+
+	return avg, stdev
+
+}
+
+func runTests(files []string, numTests int) {
+	avgSingle, stdevSingle := testFunc(singleThreaded, files, numTests)
+	avg0, stdev0 := testFunc(multiThreaded0, files, numTests)
+	avg, stdev := testFunc(multiThreaded, files, numTests)
+
+	fmt.Println("single threaded:", avgSingle, stdevSingle)
+	fmt.Println("multi without split:", avg0, stdev0)
+	fmt.Println("multi with split:", avg, stdev)
 }

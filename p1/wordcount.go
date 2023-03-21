@@ -25,12 +25,12 @@ import (
 	"math"
 )
 var MAXWORDSIZE int64 = 30
-var READSIZE int64 = 100000
+var READSIZE int64 = 200000
 var NONLETTER = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 var M_OUTPUT = "/multi.txt"
 var S_OUTPUT = "/single.txt"
-var NUMTESTS = 1
-var INPUT = "justbig"
+var NUMTESTS = 50
+var INPUT = "input"
 
 func readFiles(directory string)([]string, int) {
 	filepaths, err := os.ReadDir(directory)
@@ -318,7 +318,7 @@ func testFunc(foo func([]string), input []string, iterations int) (float64, floa
 		diff *= diff
 		variance += diff
 	}
-	variance /= (float64(iterations) - 1)
+	variance /= math.Max(1, (float64(iterations) - 1))
 	stdev := math.Pow(variance, 0.5)
 
 	return avg, stdev
@@ -326,11 +326,11 @@ func testFunc(foo func([]string), input []string, iterations int) (float64, floa
 }
 
 func runTests(files []string, numTests int) {
-	//avgSingle, stdevSingle := testFunc(singleThreaded, files, numTests)
+	avgSingle, stdevSingle := testFunc(singleThreaded, files, numTests)
 	avg0, stdev0 := testFunc(multiThreaded0, files, numTests)
 	avg, stdev := testFunc(multiThreaded, files, numTests)
 
-	//fmt.Println("single threaded:", avgSingle, stdevSingle)
+	fmt.Println("single threaded:", avgSingle, stdevSingle)
 	fmt.Println("multi without split:", avg0, stdev0)
 	fmt.Println("multi with split:", avg, stdev)
 }
